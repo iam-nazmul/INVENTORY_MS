@@ -1,0 +1,54 @@
+name: Build Release Artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            name: linux
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install uv
+      run: |
+        curl -LsSf https://astral.sh/uv/install.sh | sh
+        echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+    - name: Install dependencies
+      run: uv sync
+
+    - name: Build artifact
+      shell: bash
+      run: |
+        if [[ "${{ matrix.name }}" == "windows" ]]; then
+          python build.py --target exe --name inventory_ms
+        elif [[ "${{ matrix.name }}" == "linux" ]]; then
+          python build.py --target deb --name inventory_ms
+        elif [[ "${{ matrix.name }}" == "macos" ]]; then
+          python build.py --target app --name inventory_ms
+        fi
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ims-${{ matrix.name }}
+        path: dist/

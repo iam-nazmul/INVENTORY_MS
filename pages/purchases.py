@@ -228,11 +228,22 @@ class PurchaseDetailDialog(QDialog):
             tl.addWidget(ll, r,0); tl.addWidget(vl, r,1)
         layout.addWidget(tf)
         btns = QHBoxLayout(); btns.addStretch()
+        p = btn("Print PO", WARNING); p.clicked.connect(self._print_po)
+        btns.addWidget(p)
         if purchase["due_amount"] > 0:
             pay = btn("Pay Supplier", SUCCESS); pay.clicked.connect(self._pay)
             btns.addWidget(pay)
         c = btn("Close","#E5E7EB","#374151"); c.clicked.connect(self.accept)
         btns.addWidget(c); layout.addLayout(btns)
+
+    def _print_po(self):
+        from invoices.templates import build_a4_purchase_invoice, build_pos_purchase_receipt
+        from invoices.printer import PrintInvoiceDialog
+        items = [dict(i) for i in self.db.get_purchase_items(self.purchase["id"])]
+        company = self.db.get_company_info()
+        a4  = build_a4_purchase_invoice(dict(self.purchase), items, company)
+        pos = build_pos_purchase_receipt(dict(self.purchase), items, company)
+        PrintInvoiceDialog(self, a4, pos, self.purchase["po_number"], "Print Purchase Order").exec()
 
     def _pay(self):
         from PyQt6.QtWidgets import QInputDialog

@@ -5,7 +5,10 @@ __pycache__/
 
 # C extensions
 *.so
-
+deb_pkg
+*/deb_pkg
+deb_pkg/*
+deb_pkgs/
 # Distribution / packaging
 .Python
 build/
@@ -219,4 +222,5 @@ __marimo__/
 *.db
 *.sqlite
 *.sqlite3
-uv.lock
+uv.lockdeb_pkg/usr/bin/inventory_ms
+deb_pkg/

@@ -294,11 +294,22 @@ class SaleDetailDialog(QDialog):
         layout.addWidget(tf)
 
         btns = QHBoxLayout(); btns.addStretch()
+        p = btn("Print Invoice", INFO); p.clicked.connect(self._print_invoice)
+        btns.addWidget(p)
         if sale["due_amount"] > 0:
             pay = btn("Collect Payment", SUCCESS); pay.clicked.connect(self._collect)
             btns.addWidget(pay)
         c = btn("Close","#E5E7EB","#374151"); c.clicked.connect(self.accept)
         btns.addWidget(c); layout.addLayout(btns)
+
+    def _print_invoice(self):
+        from invoices.templates import build_a4_sales_invoice, build_pos_sales_receipt
+        from invoices.printer import PrintInvoiceDialog
+        items = [dict(i) for i in self.db.get_sale_items(self.sale["id"])]
+        company = self.db.get_company_info()
+        a4  = build_a4_sales_invoice(dict(self.sale), items, company)
+        pos = build_pos_sales_receipt(dict(self.sale), items, company)
+        PrintInvoiceDialog(self, a4, pos, self.sale["invoice_no"], "Print Invoice").exec()
 
     def _collect(self):
         from PyQt6.QtWidgets import QInputDialog

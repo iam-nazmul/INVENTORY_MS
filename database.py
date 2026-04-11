@@ -1,7 +1,35 @@
 import sqlite3
+import hashlib
 import os
+import sys
+from pathlib import Path
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "inventory.db")
+def get_data_dir():
+    """Get the user data directory for the application."""
+    if getattr(sys, 'frozen', False):
+        # Running as bundled executable
+        app_name = "inventory_ms"
+    else:
+        # Running from source
+        app_name = "inventory_ms"
+
+    # Get platform-specific data directory
+    if os.name == 'nt':  # Windows
+        data_dir = Path(os.environ.get('APPDATA', '')) / app_name
+    elif os.name == 'posix':  # Linux/macOS
+        if sys.platform == 'darwin':  # macOS
+            data_dir = Path.home() / 'Library' / 'Application Support' / app_name
+        else:  # Linux
+            data_dir = Path.home() / '.local' / 'share' / app_name
+    else:
+        # Fallback
+        data_dir = Path.home() / app_name
+
+    # Create directory if it doesn't exist
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
+
+DB_PATH = get_data_dir() / "inventory.db"
 
 
 class Database:
@@ -215,7 +243,59 @@ class Database:
                 unit_price  REAL NOT NULL,
                 total       REAL NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS transactions (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                product_id  INTEGER NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+                type        TEXT NOT NULL,
+                quantity    INTEGER NOT NULL,
+                price       REAL DEFAULT 0,
+                note        TEXT,
+                created_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT NOT NULL UNIQUE,
+                password   TEXT NOT NULL,
+                role       TEXT NOT NULL DEFAULT 'staff',
+                role_id    INTEGER REFERENCES roles(id) ON DELETE SET NULL,
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS roles (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at  TEXT DEFAULT (datetime('now','localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS menus (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL UNIQUE,
+                icon       TEXT,
+                section    TEXT,
+                sort_order INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS role_permissions (
+                role_id INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+                menu_id INTEGER NOT NULL REFERENCES menus(id) ON DELETE CASCADE,
+                PRIMARY KEY (role_id, menu_id)
+            );
         """)
+        # Migrations for existing databases
+        for stmt in [
+            "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'staff'",
+            "ALTER TABLE users ADD COLUMN role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL",
+            "ALTER TABLE users ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1",
+            "ALTER TABLE users ADD COLUMN photo BLOB DEFAULT NULL",
+            "ALTER TABLE products ADD COLUMN image BLOB DEFAULT NULL",
+        ]:
+            try:
+                self.conn.execute(stmt)
+            except Exception:
+                pass
         self.conn.commit()
 
     def _seed_defaults(self):
@@ -263,7 +343,222 @@ class Database:
                     ("4002","Other Income",         "REVENUE",   "CR","Miscellaneous income"),
                 ],
             )
+        # ── Menus (seed all nav pages) ──────────────────────────────────────────
+        _MENU_DEFS = [
+            ("Dashboard",       "📊", None,          1),
+            ("Products",        "📦", "INVENTORY",    2),
+            ("Stock",           "📈", "INVENTORY",    3),
+            ("Transactions",    "🔄", "INVENTORY",    4),
+            ("Sales",           "🛒", "TRADING",      5),
+            ("Sales Return",    "↩",  "TRADING",      6),
+            ("Purchases",       "📋", "TRADING",      7),
+            ("Purchase Return", "↪",  "TRADING",      8),
+            ("Credit",          "💳", "TRADING",      9),
+            ("Customers",       "👥", "PARTIES",     10),
+            ("Suppliers",       "🚚", "PARTIES",     11),
+            ("Cash",            "💰", "FINANCE",     12),
+            ("Accounting",      "📒", "FINANCE",     13),
+            ("Reports",         "📄", "ANALYTICS",   14),
+            ("Categories",      "🏷", "SETTINGS",    15),
+            ("Users",           "👤", "SETTINGS",    16),
+            ("Roles",           "🔑", "SETTINGS",    17),
+        ]
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO menus (name, icon, section, sort_order) VALUES (?,?,?,?)",
+            _MENU_DEFS
+        )
+
+        # ── Roles ────────────────────────────────────────────────────────────────
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO roles (name, description) VALUES (?,?)",
+            [("admin", "Full system access — all menus"),
+             ("staff", "Standard access — daily operations only")]
+        )
+        # ── Default permissions ──────────────────────────────────────────────────
+        admin_id = self.conn.execute("SELECT id FROM roles WHERE name='admin'").fetchone()["id"]
+        staff_id = self.conn.execute("SELECT id FROM roles WHERE name='staff'").fetchone()["id"]
+
+        # Admin gets every menu
+        for row in self.conn.execute("SELECT id FROM menus").fetchall():
+            self.conn.execute(
+                "INSERT OR IGNORE INTO role_permissions (role_id, menu_id) VALUES (?,?)",
+                (admin_id, row["id"])
+            )
+        # Staff gets daily-operations menus
+        _STAFF_MENUS = [
+            "Dashboard", "Products", "Stock", "Sales", "Sales Return",
+            "Purchases", "Purchase Return", "Credit", "Customers", "Suppliers", "Cash",
+        ]
+        for name in _STAFF_MENUS:
+            row = self.conn.execute("SELECT id FROM menus WHERE name=?", (name,)).fetchone()
+            if row:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO role_permissions (role_id, menu_id) VALUES (?,?)",
+                    (staff_id, row["id"])
+                )
+
+        # ── Default admin user (password: admin123) ──────────────────────────────
+        cur = self.conn.execute("SELECT COUNT(*) FROM users")
+        if cur.fetchone()[0] == 0:
+            hashed = hashlib.sha256("admin123".encode()).hexdigest()
+            self.conn.execute(
+                "INSERT INTO users (username, password, role, role_id) VALUES (?,?,?,?)",
+                ("admin", hashed, "admin", admin_id)
+            )
+        else:
+            self.conn.execute(
+                "UPDATE users SET role='admin' WHERE username='admin' AND role='staff'"
+            )
+
+        # ── Migrate existing users: populate role_id from role TEXT ──────────────
+        for rname in ("admin", "staff"):
+            rid = self.conn.execute(
+                "SELECT id FROM roles WHERE name=?", (rname,)
+            ).fetchone()
+            if rid:
+                self.conn.execute(
+                    "UPDATE users SET role_id=? WHERE role=? AND role_id IS NULL",
+                    (rid["id"], rname)
+                )
+
         self.conn.commit()
+
+    def check_credentials(self, username, password):
+        hashed = hashlib.sha256(password.encode()).hexdigest()
+        row = self.conn.execute("""
+            SELECT u.id, u.username, u.role, u.role_id,
+                   COALESCE(r.name, u.role) AS role_name, u.is_active, u.photo
+            FROM users u
+            LEFT JOIN roles r ON r.id = u.role_id
+            WHERE u.username=? AND u.password=? AND u.is_active=1
+        """, (username, hashed)).fetchone()
+        return dict(row) if row else None
+
+    def register_user(self, username, password, role_name="staff", photo_bytes=None):
+        """Register a new user. Raises ValueError on validation failure."""
+        username = username.strip()
+        if not username:
+            raise ValueError("Username cannot be empty.")
+        if len(password) < 4:
+            raise ValueError("Password must be at least 4 characters.")
+        hashed = hashlib.sha256(password.encode()).hexdigest()
+        role_row = self.conn.execute(
+            "SELECT id FROM roles WHERE name=?", (role_name,)
+        ).fetchone()
+        role_id = role_row["id"] if role_row else None
+        try:
+            self.conn.execute(
+                "INSERT INTO users (username, password, role, role_id, photo) VALUES (?,?,?,?,?)",
+                (username, hashed, role_name, role_id, photo_bytes)
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Username '{username}' is already taken.")
+
+    def get_all_users(self):
+        return self.conn.execute("""
+            SELECT u.id, u.username, u.role, u.role_id,
+                   COALESCE(r.name, u.role) AS role_name, u.created_at, u.is_active, u.photo
+            FROM users u LEFT JOIN roles r ON r.id = u.role_id
+            ORDER BY u.id
+        """).fetchall()
+
+    def set_user_photo(self, user_id, photo_bytes):
+        self.conn.execute("UPDATE users SET photo=? WHERE id=?", (photo_bytes, user_id))
+        self.conn.commit()
+
+    def verify_user_password(self, user_id, password):
+        """Return True if the given password matches the stored hash for user_id."""
+        hashed = hashlib.sha256(password.encode()).hexdigest()
+        row = self.conn.execute(
+            "SELECT id FROM users WHERE id=? AND password=?", (user_id, hashed)
+        ).fetchone()
+        return row is not None
+
+    def set_user_password(self, user_id, new_password):
+        if len(new_password) < 4:
+            raise ValueError("Password must be at least 4 characters.")
+        hashed = hashlib.sha256(new_password.encode()).hexdigest()
+        self.conn.execute("UPDATE users SET password=? WHERE id=?", (hashed, user_id))
+        self.conn.commit()
+
+    def set_user_active(self, user_id, is_active: bool):
+        self.conn.execute("UPDATE users SET is_active=? WHERE id=?", (1 if is_active else 0, user_id))
+        self.conn.commit()
+
+    # ─── Roles ────────────────────────────────────────────────────────────────
+
+    def get_all_roles(self):
+        return self.conn.execute(
+            "SELECT id, name, description, created_at FROM roles ORDER BY id"
+        ).fetchall()
+
+    def create_role(self, name, description=""):
+        name = name.strip()
+        if not name:
+            raise ValueError("Role name cannot be empty.")
+        try:
+            self.conn.execute(
+                "INSERT INTO roles (name, description) VALUES (?,?)", (name, description)
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Role '{name}' already exists.")
+
+    def update_role(self, role_id, name, description=""):
+        name = name.strip()
+        if not name:
+            raise ValueError("Role name cannot be empty.")
+        try:
+            self.conn.execute(
+                "UPDATE roles SET name=?, description=? WHERE id=?",
+                (name, description, role_id)
+            )
+            self.conn.commit()
+        except sqlite3.IntegrityError:
+            raise ValueError(f"Role '{name}' already exists.")
+
+    def delete_role(self, role_id):
+        row = self.conn.execute("SELECT name FROM roles WHERE id=?", (role_id,)).fetchone()
+        if row and row["name"] in ("admin", "staff"):
+            raise ValueError("Cannot delete built-in roles (admin / staff).")
+        self.conn.execute("DELETE FROM roles WHERE id=?", (role_id,))
+        self.conn.commit()
+
+    # ─── Menus & Permissions ──────────────────────────────────────────────────
+
+    def get_menus(self):
+        return self.conn.execute(
+            "SELECT id, name, icon, section, sort_order FROM menus ORDER BY sort_order"
+        ).fetchall()
+
+    def get_role_permissions(self, role_id):
+        """Returns set of menu_ids assigned to this role."""
+        rows = self.conn.execute(
+            "SELECT menu_id FROM role_permissions WHERE role_id=?", (role_id,)
+        ).fetchall()
+        return {r["menu_id"] for r in rows}
+
+    def set_role_permissions(self, role_id, menu_ids):
+        """Replace all permissions for a role with the given menu_id set."""
+        self.conn.execute("DELETE FROM role_permissions WHERE role_id=?", (role_id,))
+        for mid in menu_ids:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO role_permissions (role_id, menu_id) VALUES (?,?)",
+                (role_id, mid)
+            )
+        self.conn.commit()
+
+    def get_user_permissions(self, role_id):
+        """Returns set of allowed menu *names* for a role_id."""
+        if role_id is None:
+            return set()
+        rows = self.conn.execute("""
+            SELECT m.name FROM role_permissions rp
+            JOIN menus m ON m.id = rp.menu_id
+            WHERE rp.role_id = ?
+        """, (role_id,)).fetchall()
+        return {r["name"] for r in rows}
 
     # ─── Settings ─────────────────────────────────────────────────────────────
 
@@ -311,16 +606,23 @@ class Database:
         total_sales      = c.execute("SELECT COALESCE(SUM(total),0) FROM sales").fetchone()[0]
         today_sales      = c.execute("SELECT COALESCE(SUM(total),0) FROM sales WHERE date(sale_date)=date('now','localtime')").fetchone()[0]
         total_purchases  = c.execute("SELECT COALESCE(SUM(total),0) FROM purchases").fetchone()[0]
-        receivable       = c.execute("SELECT COALESCE(SUM(balance),0) FROM customers WHERE balance>0").fetchone()[0]
-        payable          = c.execute("SELECT COALESCE(SUM(balance),0) FROM suppliers WHERE balance>0").fetchone()[0]
+        receivable       = c.execute("SELECT COALESCE(SUM(due_amount),0) FROM sales WHERE status IN ('partial','unpaid')").fetchone()[0]
+        payable          = c.execute("SELECT COALESCE(SUM(due_amount),0) FROM purchases WHERE status IN ('partial','unpaid')").fetchone()[0]
         unpaid_invoices  = c.execute("SELECT COUNT(*) FROM sales WHERE status IN ('partial','unpaid')").fetchone()[0]
         cash_balance     = self.get_cash_balance()
+        pl_row = c.execute("""
+            SELECT COALESCE(SUM(si.total), 0)                   AS revenue,
+                   COALESCE(SUM(si.quantity * p.cost_price), 0) AS cogs
+            FROM sale_items si
+            JOIN products p ON p.id = si.product_id
+        """).fetchone()
+        gross_profit = pl_row["revenue"] - pl_row["cogs"]
         return dict(
             total_products=total_products, total_stock=total_stock, low_stock=low_stock,
             stock_value=stock_value, total_customers=total_customers, total_suppliers=total_suppliers,
             total_sales=total_sales, today_sales=today_sales, total_purchases=total_purchases,
             receivable=receivable, payable=payable, unpaid_invoices=unpaid_invoices,
-            cash_balance=cash_balance,
+            cash_balance=cash_balance, gross_profit=gross_profit,
         )
 
     def get_recent_sales(self, limit=8):
@@ -450,7 +752,7 @@ class Database:
         q = """
             SELECT p.id, p.name, p.sku, c.name AS category, s.name AS supplier,
                    p.unit, p.cost_price, p.sale_price, p.quantity, p.min_stock,
-                   p.description, p.updated_at
+                   p.description, p.updated_at, p.image
             FROM products p
             LEFT JOIN categories c ON c.id=p.category_id
             LEFT JOIN suppliers  s ON s.id=p.supplier_id
@@ -469,28 +771,30 @@ class Database:
         return self.conn.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
 
     def add_product(self, name, sku, category_id, supplier_id, unit,
-                    cost_price, sale_price, quantity, min_stock, description):
+                    cost_price, sale_price, quantity, min_stock, description,
+                    image_bytes=None):
         cur = self.conn.execute("""
             INSERT INTO products (name,sku,category_id,supplier_id,unit,cost_price,
-                                  sale_price,quantity,min_stock,description)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+                                  sale_price,quantity,min_stock,description,image)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
         """, (name, sku, category_id or None, supplier_id or None,
-              unit, cost_price, sale_price, quantity, min_stock, description))
+              unit, cost_price, sale_price, quantity, min_stock, description, image_bytes))
         pid = cur.lastrowid
         if quantity > 0:
             self._record_stock_movement(pid, "OPENING", quantity, quantity, "opening", None, "Opening stock")
         self.conn.commit()
 
     def update_product(self, pid, name, sku, category_id, supplier_id, unit,
-                       cost_price, sale_price, quantity, min_stock, description):
+                       cost_price, sale_price, quantity, min_stock, description,
+                       image_bytes=None):
         old = self.get_product_by_id(pid)
         self.conn.execute("""
             UPDATE products SET name=?,sku=?,category_id=?,supplier_id=?,unit=?,
                 cost_price=?,sale_price=?,quantity=?,min_stock=?,description=?,
-                updated_at=datetime('now','localtime')
+                image=?,updated_at=datetime('now','localtime')
             WHERE id=?
         """, (name, sku, category_id or None, supplier_id or None,
-              unit, cost_price, sale_price, quantity, min_stock, description, pid))
+              unit, cost_price, sale_price, quantity, min_stock, description, image_bytes, pid))
         if old and old["quantity"] != quantity:
             diff = quantity - old["quantity"]
             self._record_stock_movement(
@@ -1010,10 +1314,10 @@ class Database:
         p = []
         date_filter = ""
         if date_from:
-            date_filter += " AND s.sale_date >= ?"
+            date_filter += " AND sale_date >= ?"
             p.append(date_from)
         if date_to:
-            date_filter += " AND s.sale_date <= ?"
+            date_filter += " AND sale_date <= ?"
             p.append(date_to)
         revenue = self.conn.execute(
             f"SELECT COALESCE(SUM(total),0) FROM sales WHERE 1=1{date_filter}", p
@@ -1026,7 +1330,55 @@ class Database:
             f"SELECT COALESCE(SUM(total),0) FROM purchases WHERE 1=1{df2}", p2
         ).fetchone()[0]
         profit = revenue - purchases
-        return dict(revenue=revenue, purchases=purchases, profit=profit)
+        # Gross Profit = Sale Revenue − Cost of Goods Sold (cost_price × qty per item)
+        gp_row = self.conn.execute(f"""
+            SELECT COALESCE(SUM(si.total), 0)                   AS rev,
+                   COALESCE(SUM(si.quantity * p.cost_price), 0) AS cogs
+            FROM sale_items si
+            JOIN products p  ON p.id  = si.product_id
+            JOIN sales    s  ON s.id  = si.sale_id
+            WHERE 1=1{date_filter}
+        """, p).fetchone()
+        gross_profit = gp_row["rev"] - gp_row["cogs"]
+        cogs = gp_row["cogs"]
+        return dict(revenue=revenue, purchases=purchases, profit=profit,
+                    cogs=cogs, gross_profit=gross_profit)
+
+    def get_period_summary(self, period, date_from=None, date_to=None):
+        """Returns sales/purchase totals grouped by day/week/month/year."""
+        fmt_map = {
+            "daily":   "%Y-%m-%d",
+            "weekly":  "%Y-W%W",
+            "monthly": "%Y-%m",
+            "yearly":  "%Y",
+        }
+        fmt = fmt_map.get(period, "%Y-%m-%d")
+        p_s, p_p = [], []
+        df_s, df_p = "", ""
+        if date_from:
+            df_s += " AND sale_date >= ?";     p_s.append(date_from)
+            df_p += " AND purchase_date >= ?"; p_p.append(date_from)
+        if date_to:
+            df_s += " AND sale_date <= ?";     p_s.append(date_to)
+            df_p += " AND purchase_date <= ?"; p_p.append(date_to)
+        sales = self.conn.execute(
+            f"SELECT strftime('{fmt}', sale_date) AS period, "
+            f"COALESCE(SUM(total),0) AS total FROM sales WHERE 1=1{df_s} "
+            "GROUP BY period ORDER BY period", p_s
+        ).fetchall()
+        purchases = self.conn.execute(
+            f"SELECT strftime('{fmt}', purchase_date) AS period, "
+            f"COALESCE(SUM(total),0) AS total FROM purchases WHERE 1=1{df_p} "
+            "GROUP BY period ORDER BY period", p_p
+        ).fetchall()
+        result = {}
+        for row in sales:
+            result.setdefault(row["period"], {"sales": 0.0, "purchases": 0.0})
+            result[row["period"]]["sales"] = row["total"]
+        for row in purchases:
+            result.setdefault(row["period"], {"sales": 0.0, "purchases": 0.0})
+            result[row["period"]]["purchases"] = row["total"]
+        return sorted(result.items())
 
     # ─── Sales Returns ────────────────────────────────────────────────────────
 
@@ -1320,6 +1672,52 @@ class Database:
         )
         self.conn.commit()
         return return_no
+
+    # ─── Manual Transactions ──────────────────────────────────────────────────
+
+    def get_all_transactions(self, search="", tx_type=None):
+        q = """
+            SELECT t.id, p.name AS product, p.sku, t.type,
+                   t.quantity, t.price, t.note, t.created_at
+            FROM transactions t
+            JOIN products p ON p.id = t.product_id
+            WHERE 1=1
+        """
+        params = []
+        if search:
+            q += " AND (p.name LIKE ? OR p.sku LIKE ? OR t.note LIKE ?)"
+            params += [f"%{search}%"] * 3
+        if tx_type:
+            q += " AND t.type=?"
+            params.append(tx_type)
+        return self.conn.execute(q + " ORDER BY t.id DESC", params).fetchall()
+
+    def add_transaction(self, product_id, tx_type, quantity, price, note):
+        prod = self.get_product_by_id(product_id)
+        if not prod:
+            raise ValueError("Product not found")
+        if tx_type == "OUT" and prod["quantity"] < quantity:
+            raise ValueError(f"Insufficient stock. Available: {prod['quantity']}")
+        self.conn.execute(
+            "INSERT INTO transactions (product_id,type,quantity,price,note) VALUES (?,?,?,?,?)",
+            (product_id, tx_type, quantity, price, note)
+        )
+        delta = quantity if tx_type == "IN" else -quantity
+        new_qty = prod["quantity"] + delta
+        self.conn.execute(
+            "UPDATE products SET quantity=?,updated_at=datetime('now','localtime') WHERE id=?",
+            (new_qty, product_id)
+        )
+        self._record_stock_movement(
+            product_id, "MANUAL", quantity, new_qty,
+            "manual", None, note or f"Manual stock {tx_type.lower()}"
+        )
+        self.conn.commit()
+
+    # ─── Company Info ─────────────────────────────────────────────────────────
+
+    def get_company_info(self):
+        return {"name": self.get_setting("company_name", "My Company")}
 
     def close(self):
         self.conn.close()

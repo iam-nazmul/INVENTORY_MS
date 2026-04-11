@@ -46,6 +46,9 @@ class StockPage(QWidget):
         self.sum_search = search_box("  Search product…")
         self.sum_search.textChanged.connect(self._refresh_summary)
         sr.addWidget(self.sum_search); sr.addStretch()
+        inc_btn = btn("＋  Add Stock",    SUCCESS); inc_btn.clicked.connect(self._increment_stock)
+        dec_btn = btn("－  Remove Stock", DANGER);  dec_btn.clicked.connect(self._decrement_stock)
+        sr.addWidget(inc_btn); sr.addWidget(dec_btn)
         sl.addLayout(sr)
 
         # Stats strip
@@ -100,6 +103,57 @@ class StockPage(QWidget):
         tabs.addTab(move_tab, "Movement History")
 
         root.addWidget(tabs)
+
+    def _increment_stock(self):
+        self._adjust_stock("IN")
+
+    def _decrement_stock(self):
+        self._adjust_stock("OUT")
+
+    def _adjust_stock(self, direction):
+        from PyQt6.QtWidgets import QInputDialog, QMessageBox
+        r = self.tbl_summary.currentRow()
+        if r < 0:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.information(self, "Select", "Select a product row first.")
+            return
+        # Re-query to get live data (search filter may be active)
+        search = self.sum_search.text().strip().lower()
+        rows = self.db.get_stock_summary()
+        if search:
+            rows = [x for x in rows if search in x["name"].lower()
+                    or search in (x["sku"] or "").lower()]
+        if r >= len(rows):
+            return
+        row = rows[r]
+        current = row["quantity"]
+        if direction == "OUT" and current == 0:
+            QMessageBox.warning(self, "No Stock",
+                                f"'{row['name']}' has 0 units in stock.")
+            return
+        max_val = 999999 if direction == "IN" else current
+        label = (f"Add stock to  '{row['name']}'\n"
+                 f"Current stock: {current} {row['unit']}\n\n"
+                 f"Quantity to add:") if direction == "IN" else (
+                f"Remove stock from  '{row['name']}'\n"
+                f"Current stock: {current} {row['unit']}\n\n"
+                f"Quantity to remove:")
+        qty, ok = QInputDialog.getInt(self, "Adjust Stock", label, 1, 1, max_val)
+        if not ok:
+            return
+        try:
+            self.db.add_transaction(row["id"], direction, qty, 0,
+                                    f"Manual {'addition' if direction == 'IN' else 'removal'}")
+            new_qty = current + qty if direction == "IN" else current - qty
+            QMessageBox.information(
+                self, "Stock Updated",
+                f"'{row['name']}'\n"
+                f"{'Added' if direction == 'IN' else 'Removed'}:  {qty} {row['unit']}\n"
+                f"New stock:  {new_qty} {row['unit']}"
+            )
+            self.refresh()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", str(e))
 
     def refresh(self):
         self._refresh_summary()

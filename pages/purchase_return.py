@@ -256,6 +256,7 @@ class PurchaseReturnDialog(QDialog):
 class PurchaseReturnDetailDialog(QDialog):
     def __init__(self, parent, db, ret):
         super().__init__(parent)
+        self.db = db; self.ret = ret
         self.setWindowTitle(f"Purchase Return: {ret['return_no']}")
         self.setMinimumSize(580, 400); self.setModal(True)
         layout = QVBoxLayout(self); layout.setContentsMargins(20, 16, 20, 16); layout.setSpacing(10)
@@ -306,8 +307,19 @@ class PurchaseReturnDetailDialog(QDialog):
             styleSheet=f"font-size:18px;font-weight:700;color:{WARNING};"))
         layout.addWidget(tf)
 
+        btns = QHBoxLayout(); btns.addStretch()
+        p = btn("Print Receipt", WARNING); p.clicked.connect(self._print_receipt)
+        btns.addWidget(p)
         c = btn("Close", "#E5E7EB", "#374151"); c.clicked.connect(self.accept)
-        layout.addWidget(c, alignment=Qt.AlignmentFlag.AlignRight)
+        btns.addWidget(c); layout.addLayout(btns)
+
+    def _print_receipt(self):
+        from invoices.templates import build_pos_purchase_return_receipt
+        from invoices.printer import PrintInvoiceDialog
+        items = [dict(i) for i in self.db.get_purchase_return_items(self.ret["id"])]
+        company = self.db.get_company_info()
+        pos = build_pos_purchase_return_receipt(dict(self.ret), items, company)
+        PrintInvoiceDialog(self, pos, pos, self.ret["return_no"], "Print Return Receipt").exec()
 
 
 # ── Purchase Return Page ───────────────────────────────────────────────────────

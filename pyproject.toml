@@ -5,5 +5,19 @@ description = "Inventory Management System - PyQt6 desktop application"
 requires-python = ">=3.9"
 authors = [{name = "IMS Developer"}]
 dependencies = [
+    "pyinstaller>=6.19.0",
     "PyQt6>=6.6.0",
 ]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pages", "invoices"]
+
+[tool.setuptools.package-data]
+"*" = ["*.py"]
+
+[project.optional-dependencies]
+build = ["pyinstaller>=6.0.0"]
