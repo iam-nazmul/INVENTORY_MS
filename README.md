@@ -212,3 +212,83 @@ For issues or feature requests, contact the development team.
 
 
 
+```
+
+curl http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world"
+}'
+
+```
+
+```
+
+curl http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world"
+}' | jq -s 'map(.response) | add'
+```
+
+
+```
+import requests
+
+data = {
+    "model": "gemma3:latest",
+    "prompt": "Hello world"
+}
+
+res = requests.post("http://localhost:11434/api/generate", json=data)
+full_response = "".join([chunk["response"] for chunk in res.json()])
+print(full_response)
+```
+
+
+```
+curl -s http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world",
+  "stream": false
+}' | jq -r '.response'
+```
+
+
+```
+curl -s http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world",
+  "stream": false
+}' | python3 -c "import sys, json; print(json.load(sys.stdin)['response'])"
+```
+
+
+
+```
+curl -sN http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world",
+  "stream": true
+}' | while IFS= read -r line; do
+  echo "$line" | jq -r '.response' 2>/dev/null | tr -d '\n'
+done
+echo
+```
+
+
+```
+curl -sN http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world",
+  "stream": true
+}' | jq -rj '.response'
+echo
+```
+
+
+```
+curl -sN http://localhost:11434/api/generate -d '{
+  "model": "gemma3:latest",
+  "prompt": "Hello world",
+  "stream": true
+}' | jq -rj '.response'
+```
