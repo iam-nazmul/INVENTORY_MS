@@ -1,0 +1,12 @@
+{
+  "assets": {},
+  "config": {
+    "build_asset_types": [],
+    "linking_enabled": true
+  },
+  "out_dir_shared": "/home/nazmul/Desktop/IMS/ims_flutter/.dart_tool/hooks_runner/shared/objective_c/build/",
+  "out_file": "/home/nazmul/Desktop/IMS/ims_flutter/.dart_tool/hooks_runner/objective_c/6782ff62a082d25dd9788598e67912e5/output.json",
+  "package_name": "objective_c",
+  "package_root": "/home/nazmul/.pub-cache/hosted/pub.dev/objective_c-9.3.0/",
+  "user_defines": {}
+}

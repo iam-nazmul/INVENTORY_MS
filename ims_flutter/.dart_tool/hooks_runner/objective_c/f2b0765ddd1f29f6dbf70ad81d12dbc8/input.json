@@ -1,0 +1,26 @@
+{
+  "assets": {},
+  "config": {
+    "build_asset_types": [
+      "code_assets/code"
+    ],
+    "extensions": {
+      "code_assets": {
+        "c_compiler": {
+          "ar": "/usr/lib/llvm-18/bin/llvm-ar",
+          "cc": "/usr/lib/llvm-18/bin/clang",
+          "ld": "/usr/lib/llvm-18/bin/ld.lld"
+        },
+        "link_mode_preference": "dynamic",
+        "target_architecture": "x64",
+        "target_os": "linux"
+      }
+    },
+    "linking_enabled": true
+  },
+  "out_dir_shared": "/home/nazmul/Desktop/IMS/ims_flutter/.dart_tool/hooks_runner/shared/objective_c/build/",
+  "out_file": "/home/nazmul/Desktop/IMS/ims_flutter/.dart_tool/hooks_runner/objective_c/f2b0765ddd1f29f6dbf70ad81d12dbc8/output.json",
+  "package_name": "objective_c",
+  "package_root": "/home/nazmul/.pub-cache/hosted/pub.dev/objective_c-9.3.0/",
+  "user_defines": {}
+}
